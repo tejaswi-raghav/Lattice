@@ -1,0 +1,22 @@
+{$DOMAIN} {
+	# Auth (GoTrue) — /auth/v1/*
+	handle_path /auth/v1/* {
+		reverse_proxy gotrue:9999
+	}
+
+	# Data API (PostgREST) — /rest/v1/*
+	handle_path /rest/v1/* {
+		reverse_proxy postgrest:3000
+	}
+
+	# Object storage (volumetric assets, media, avatars) — /storage/v1/*
+	handle_path /storage/v1/* {
+		reverse_proxy storage:5000
+	}
+
+	# Everything else: the built frontend (served as static files, e.g. via
+	# `npm run build` output copied to a static file server or CDN of your choice)
+	reverse_proxy frontend:80
+
+	encode gzip
+}

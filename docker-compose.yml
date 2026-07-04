@@ -1,0 +1,106 @@
+version: "3.8"
+
+# Lattice self-hosted stack.
+# One VPS, one docker compose file, one tenant. Nothing here phones home.
+#
+# Bring your own values in a `.env` file (see `.env.example`) before running:
+#   docker compose up -d
+
+services:
+  postgres:
+    image: supabase/postgres:15.3.0
+    container_name: lattice_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - lattice_network
+
+  gotrue:
+    image: supabase/gotrue:v2.140.0
+    container_name: lattice_auth
+    restart: unless-stopped
+    environment:
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: "true"
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${API_EXTERNAL_URL}/auth/v1/callback
+    depends_on:
+      - postgres
+    networks:
+      - lattice_network
+
+  postgrest:
+    image: postgrest/postgrest:v12.0.0
+    container_name: lattice_api
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - postgres
+    networks:
+      - lattice_network
+
+  storage:
+    image: supabase/storage-api:v0.43.0
+    container_name: lattice_storage
+    restart: unless-stopped
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://postgrest:3000
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PGOPTIONS: "-c search_path=storage,public"
+      FILE_SIZE_LIMIT: "524288000" # 500MB — headroom for volumetric splat assets
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: lattice
+      REGION: local
+    volumes:
+      - storage_data:/var/lib/storage
+    depends_on:
+      - postgres
+      - postgrest
+    networks:
+      - lattice_network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: lattice_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on:
+      - postgrest
+      - gotrue
+      - storage
+    networks:
+      - lattice_network
+
+volumes:
+  pgdata:
+  storage_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  lattice_network:
+    driver: bridge
